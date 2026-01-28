@@ -232,6 +232,19 @@ impl ModelProviderInfo {
             .unwrap_or(false)
     }
 
+    /// Returns `true` if this provider appears to be a Databricks endpoint.
+    /// Databricks does not support the web_search tool in the responses API.
+    pub(crate) fn is_databricks_endpoint(&self) -> bool {
+        if self.name.eq_ignore_ascii_case("databricks") {
+            return true;
+        }
+
+        self.base_url
+            .as_ref()
+            .map(|base| matches_databricks_base_url(base))
+            .unwrap_or(false)
+    }
+
     /// Apply provider-specific HTTP headers (both static and environment-based)
     /// onto an existing [`CodexRequestBuilder`] and return the updated
     /// builder.
@@ -421,6 +434,17 @@ fn matches_azure_responses_base_url(base_url: &str) -> bool {
     AZURE_MARKERS.iter().any(|marker| base.contains(marker))
 }
 
+fn matches_databricks_base_url(base_url: &str) -> bool {
+    let base = base_url.to_ascii_lowercase();
+    const DATABRICKS_MARKERS: [&str; 4] = [
+        ".databricks.com",
+        ".databricks.net",
+        ".databricksapps.com",
+        "azuredatabricks.net",
+    ];
+    DATABRICKS_MARKERS.iter().any(|marker| base.contains(marker))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -578,6 +602,70 @@ env_http_headers = { "X-Example-Env-Header" = "EXAMPLE_ENV_VAR" }
             assert!(
                 !provider.is_azure_responses_endpoint(),
                 "expected {base_url} not to be detected as Azure"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_databricks_endpoints() {
+        fn provider_for(base_url: &str) -> ModelProviderInfo {
+            ModelProviderInfo {
+                name: "test".into(),
+                base_url: Some(base_url.into()),
+                env_key: None,
+                env_key_instructions: None,
+                experimental_bearer_token: None,
+                wire_api: WireApi::Responses,
+                query_params: None,
+                http_headers: None,
+                env_http_headers: None,
+                request_max_retries: None,
+                stream_max_retries: None,
+                stream_idle_timeout_ms: None,
+                requires_openai_auth: false,
+            }
+        }
+
+        let positive_cases = [
+            "https://my-workspace.cloud.databricks.com/serving-endpoints",
+            "https://adb-123456789.12.azuredatabricks.net/serving-endpoints",
+            "https://my-app.databricksapps.com/api",
+        ];
+        for base_url in positive_cases {
+            let provider = provider_for(base_url);
+            assert!(
+                provider.is_databricks_endpoint(),
+                "expected {base_url} to be detected as Databricks"
+            );
+        }
+
+        let named_provider = ModelProviderInfo {
+            name: "Databricks".into(),
+            base_url: Some("https://example.com".into()),
+            env_key: None,
+            env_key_instructions: None,
+            experimental_bearer_token: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+            request_max_retries: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
+            requires_openai_auth: false,
+        };
+        assert!(named_provider.is_databricks_endpoint());
+
+        let negative_cases = [
+            "https://api.openai.com/v1",
+            "https://example.com/openai",
+            "https://foo.openai.azure.com/openai",
+        ];
+        for base_url in negative_cases {
+            let provider = provider_for(base_url);
+            assert!(
+                !provider.is_databricks_endpoint(),
+                "expected {base_url} not to be detected as Databricks"
             );
         }
     }

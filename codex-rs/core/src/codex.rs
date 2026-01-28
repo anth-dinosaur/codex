@@ -415,6 +415,9 @@ impl Session {
             session_configuration.model.as_str(),
         );
 
+        // Databricks does not support the web_search tool, so disable it for Databricks providers.
+        let is_databricks = provider.is_databricks_endpoint();
+
         let client = ModelClient::new(
             Arc::new(per_turn_config.clone()),
             auth_manager,
@@ -426,9 +429,17 @@ impl Session {
             session_configuration.session_source.clone(),
         );
 
+        let features = if is_databricks {
+            let mut features = config.features.clone();
+            features.disable(crate::features::Feature::WebSearchRequest);
+            features
+        } else {
+            config.features.clone()
+        };
+
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
-            features: &config.features,
+            features: &features,
         });
 
         TurnContext {
